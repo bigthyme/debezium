@@ -39,7 +39,7 @@ import io.debezium.util.Strings;
  */
 public class SnapshotReader extends AbstractReader {
     // RDS install path
-    private static final String RDS_BASE_DIRECTORY = "/rdsdbbin/mysql/";
+    private final String RDS_BASE_DIRECTORY = "/rdsdbbin/mysql/";
     private boolean minimalBlocking = true;
     private final boolean includeData;
     private RecordRecorder recorder;
@@ -140,7 +140,6 @@ public class SnapshotReader extends AbstractReader {
         logServerInformation(mysql);
         boolean isLocked = false;
         boolean isTxnStarted = false;
-        boolean isRDS = false;
 
         try {
             metrics.startSnapshot();
@@ -170,7 +169,6 @@ public class SnapshotReader extends AbstractReader {
             String setSystemVariablesStatement = context.setStatementFor(systemVariables);
             AtomicBoolean interrupted = new AtomicBoolean(false);
             long lockAcquired = 0L;
-            String Mysqlpath = "";
 
             try {
                 // ------
@@ -198,16 +196,19 @@ public class SnapshotReader extends AbstractReader {
                 // perform a check to determine if the basedir matches the RDS basedir
                 sql.set(selectBaseDirStmt);
                 mysql.query(sql.get(), rs -> {
-                    if (rs.next()) {
-                        Mysqlpath = rs.getString(1)
-                    }
-                })
+                    String mySqlPath = "";
 
-                if (Mysqlpath == RDS_BASE_DIRECTORY) {
-                    // execute "FLUSH TABLES <table_name> WITH READ LOCK" (one table at a time), which only requires the LOCK TABLES privilege.
-                } else {
-                    sql.set("FLUSH TABLES WITH READ LOCK");
-                }
+                    if (rs.next()) {
+                        mySqlPath = rs.getString(1);
+                    }
+
+                    if (mySqlPath == RDS_BASE_DIRECTORY) {
+                        // execute "FLUSH TABLES <table_name> WITH READ LOCK" (one table at a time), which only requires the LOCK TABLES privilege.
+                    } else {
+                        sql.set("FLUSH TABLES WITH READ LOCK");
+                    }
+                });
+
 
                 mysql.execute(sql.get());
                 isLocked = true;
