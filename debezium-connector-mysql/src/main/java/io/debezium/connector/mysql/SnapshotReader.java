@@ -34,11 +34,12 @@ import io.debezium.util.Strings;
 
 /**
  * A component that performs a snapshot of a MySQL server, and records the schema changes in {@link MySqlSchema}.
- * 
+ *
  * @author Randall Hauch
  */
 public class SnapshotReader extends AbstractReader {
-
+    // RDS install path
+    private final String RDS_BASE_DIRECTORY = "/rdsdbbin/mysql/";
     private boolean minimalBlocking = true;
     private final boolean includeData;
     private RecordRecorder recorder;
@@ -47,7 +48,7 @@ public class SnapshotReader extends AbstractReader {
 
     /**
      * Create a snapshot reader.
-     * 
+     *
      * @param name the name of this reader; may not be null
      * @param context the task context in which this reader is running; may not be null
      */
@@ -64,7 +65,7 @@ public class SnapshotReader extends AbstractReader {
      * releasing the read lock as early as possible. Although the snapshot process should obtain a consistent snapshot even
      * when releasing the lock as early as possible, it may be desirable to explicitly hold onto the read lock until execution
      * completes. In such cases, holding onto the lock will prevent all updates to the database during the snapshot process.
-     * 
+     *
      * @param minimalBlocking {@code true} if the lock is to be released as early as possible, or {@code false} if the lock
      *            is to be held for the entire {@link #execute() execution}
      * @return this object for method chaining; never null
@@ -77,7 +78,7 @@ public class SnapshotReader extends AbstractReader {
     /**
      * Set this reader's {@link #execute() execution} to produce a {@link io.debezium.data.Envelope.Operation#READ} event for each
      * row.
-     * 
+     *
      * @return this object for method chaining; never null
      */
     public SnapshotReader generateReadEvents() {
@@ -88,7 +89,7 @@ public class SnapshotReader extends AbstractReader {
     /**
      * Set this reader's {@link #execute() execution} to produce a {@link io.debezium.data.Envelope.Operation#CREATE} event for
      * each row.
-     * 
+     *
      * @return this object for method chaining; never null
      */
     public SnapshotReader generateInsertEvents() {
@@ -139,6 +140,7 @@ public class SnapshotReader extends AbstractReader {
         logServerInformation(mysql);
         boolean isLocked = false;
         boolean isTxnStarted = false;
+
         try {
             metrics.startSnapshot();
 
@@ -187,9 +189,27 @@ public class SnapshotReader extends AbstractReader {
                 // for all databases with a global read lock, and it prevents ALL updates while we have this lock.
                 // It also ensures that everything we do while we have this lock will be consistent.
                 if (!isRunning()) return;
+                String selectBaseDirStmt = "SELET @@basedir";
+
                 lockAcquired = clock.currentTimeInMillis();
                 logger.info("Step 2: flush and obtain global read lock (preventing writes to database)");
-                sql.set("FLUSH TABLES WITH READ LOCK");
+                // perform a check to determine if the basedir matches the RDS basedir
+                sql.set(selectBaseDirStmt);
+                mysql.query(sql.get(), rs -> {
+                    String mySqlPath = "";
+
+                    if (rs.next()) {
+                        mySqlPath = rs.getString(1);
+                    }
+
+                    if (mySqlPath == RDS_BASE_DIRECTORY) {
+                        // execute "FLUSH TABLES <table_name> WITH READ LOCK" (one table at a time), which only requires the LOCK TABLES privilege.
+                    } else {
+                        sql.set("FLUSH TABLES WITH READ LOCK");
+                    }
+                });
+
+
                 mysql.execute(sql.get());
                 isLocked = true;
 
@@ -558,7 +578,7 @@ public class SnapshotReader extends AbstractReader {
      * technique</a> for MySQL by creating the JDBC {@link Statement} with {@link ResultSet#TYPE_FORWARD_ONLY forward-only} cursor
      * and {@link ResultSet#CONCUR_READ_ONLY read-only concurrency} flags, and with a {@link Integer#MIN_VALUE minimum value}
      * {@link Statement#setFetchSize(int) fetch size hint}.
-     * 
+     *
      * @param connection the JDBC connection; may not be null
      * @return the statement; never null
      * @throws SQLException if there is a problem creating the statement
@@ -613,7 +633,7 @@ public class SnapshotReader extends AbstractReader {
     /**
      * Utility method to replace the offset in the given record with the latest. This is used on the last record produced
      * during the snapshot.
-     * 
+     *
      * @param record the record
      * @return the updated record
      */
